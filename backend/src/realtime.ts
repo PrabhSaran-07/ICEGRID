@@ -43,6 +43,29 @@ export type LocationUpdate = {
   location: RealtimeLocation;
 };
 
+export type PersonnelLocationUpdate = {
+  personnelId: string;
+  expeditionId: string;
+  location: RealtimeLocation;
+};
+
+export type AssetStatusChange = {
+  assetId: string;
+  expeditionId: string;
+  status: string;
+  updatedAt: Date;
+};
+
+export type ShipmentMilestoneAdded = {
+  shipmentId: string;
+  expeditionId: string;
+  milestone: {
+    id: string;
+    type: string;
+    occurredAt: Date;
+  };
+};
+
 export type AlertUpdate = {
   id: string;
   expeditionId: string;
@@ -68,6 +91,9 @@ export interface ServerToClientEvents {
   "cargo.updated": (update: CargoUpdate) => void;
   "cargo:update": (update: CargoUpdate) => void;
   "location.updated": (update: LocationUpdate) => void;
+  "personnel:location_update": (update: PersonnelLocationUpdate) => void;
+  "asset:status_change": (update: AssetStatusChange) => void;
+  "shipment:milestone_added": (update: ShipmentMilestoneAdded) => void;
   "emergency.created": (update: EmergencyCreated) => void;
   "alert:new": (update: AlertUpdate) => void;
 }
@@ -196,6 +222,45 @@ export function broadcastLocationUpdated(update: LocationUpdate) {
   for (const role of USER_ROLES) {
     if (!hasPermission(role, "locations.read")) continue;
     io.to(expeditionRoleRoom(update.expeditionId, role)).emit("location.updated", update);
+  }
+}
+
+export function broadcastPersonnelLocationUpdate(update: PersonnelLocationUpdate) {
+  if (!io) return;
+  for (const role of USER_ROLES) {
+    if (!hasPermission(role, "locations.read")) continue;
+    io.to(expeditionRoleRoom(update.expeditionId, role)).emit("personnel:location_update", update);
+  }
+}
+
+export function broadcastAssetStatusChange(update: AssetStatusChange) {
+  if (!io) return;
+  const payload: AssetStatusChange = {
+    assetId: update.assetId,
+    expeditionId: update.expeditionId,
+    status: update.status,
+    updatedAt: update.updatedAt,
+  };
+  for (const role of USER_ROLES) {
+    if (!hasPermission(role, "assets.read")) continue;
+    io.to(expeditionRoleRoom(update.expeditionId, role)).emit("asset:status_change", payload);
+  }
+}
+
+export function broadcastShipmentMilestoneAdded(update: ShipmentMilestoneAdded) {
+  if (!io) return;
+  const payload: ShipmentMilestoneAdded = {
+    shipmentId: update.shipmentId,
+    expeditionId: update.expeditionId,
+    milestone: {
+      id: update.milestone.id,
+      type: update.milestone.type,
+      occurredAt: update.milestone.occurredAt,
+    },
+  };
+  for (const role of USER_ROLES) {
+    if (!hasPermission(role, "expeditions.read")) continue;
+    io.to(expeditionRoleRoom(update.expeditionId, role)).emit("shipment:milestone_added", payload);
   }
 }
 

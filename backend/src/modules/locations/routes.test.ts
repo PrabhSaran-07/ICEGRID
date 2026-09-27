@@ -77,6 +77,7 @@ describe("location API authorization", () => {
 
   it("allows an authorized role to record a location", async () => {
     const locationBroadcast = vi.spyOn(realtime, "broadcastLocationUpdated");
+    const personnelLocationBroadcast = vi.spyOn(realtime, "broadcastPersonnelLocationUpdate");
     const tx = transaction();
     const eventId = "3d0e2547-62ca-4339-b6b2-6c0df52a2260";
     tx.location.findUnique.mockResolvedValueOnce(null).mockResolvedValue({ ...point, id: "loc-new", eventId });
@@ -98,6 +99,11 @@ describe("location API authorization", () => {
     expect(first.body.data.expeditionId).toBe("exp-1");
     expect(tx.location.create).toHaveBeenCalledOnce();
     expect(tx.personnelLocationHistory.create).toHaveBeenCalledOnce();
+    expect(personnelLocationBroadcast).toHaveBeenCalledWith(expect.objectContaining({
+      personnelId: "person-1",
+      expeditionId: "exp-1",
+      location: expect.objectContaining({ latitude: 78.12345678, longitude: -12.45678901, eventId }),
+    }));
     expect(locationBroadcast).toHaveBeenCalledWith(expect.objectContaining({
       entityType: "personnel", entityId: "person-1", expeditionId: "exp-1",
       location: expect.objectContaining({ latitude: 78.12345678 }),

@@ -4,7 +4,16 @@ import jwt from "jsonwebtoken";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { signAuthToken } from "./auth/jwt.js";
 import type { ClientToServerEvents, ServerToClientEvents } from "./realtime.js";
-import { broadcastAlertNew, broadcastCargoUpdate, broadcastLocationUpdated, createRealtimeServer, expeditionRoom } from "./realtime.js";
+import {
+  broadcastAlertNew,
+  broadcastAssetStatusChange,
+  broadcastCargoUpdate,
+  broadcastLocationUpdated,
+  broadcastPersonnelLocationUpdate,
+  broadcastShipmentMilestoneAdded,
+  createRealtimeServer,
+  expeditionRoom,
+} from "./realtime.js";
 
 const findExpedition = vi.hoisted(() => vi.fn());
 vi.mock("./db/prisma.js", () => ({ prisma: { expedition: { findUnique: findExpedition } } }));
@@ -181,6 +190,50 @@ describe("realtime server", () => {
     expect(authorizedEvents).toHaveLength(1);
     expect(authorizedEvents[0]).toMatchObject({ entityId: "person-1", location: { latitude: -77.85 } });
     expect(fieldListener).not.toHaveBeenCalled();
+  });
+
+  it("scopes personnel location, asset status, and shipment milestone events by permission and expedition room", async () => {
+    const { url } = await listeningServer();
+    const admin = await clientAt(url, signAuthToken({ sub: "admin", role: "ADMIN" }));
+    const field = await clientAt(url, signAuthToken({ sub: "field", role: "FIELD_PERSONNEL" }));
+    const outsideRoom = await clientAt(url, signAuthToken({ sub: "other", role: "ADMIN" }));
+    expect(await joinExpedition(admin, "exp-1")).toEqual({ ok: true });
+    expect(await joinExpedition(field, "exp-1")).toEqual({ ok: true });
+
+    const location = {
+      id: "loc-personnel", latitude: -77.85, longitude: 166.67, observedAt: new Date(), accuracyMeters: null,
+      altitudeMeters: null, source: "GPS", eventId: "event-personnel", expeditionId: "exp-1", createdAt: new Date(), updatedAt: new Date(),
+    };
+    const personnelEvent = new Promise<{ personnelId: string; location: { latitude: number } }>((resolve) => admin.once("personnel:location_update", resolve));
+    const fieldPersonnelListener = vi.fn();
+    const adminAssetEvent = new Promise<{ assetId: string; status: string }>((resolve) => admin.once("asset:status_change", resolve));
+    const fieldAssetEvent = new Promise<{ assetId: string; status: string }>((resolve) => field.once("asset:status_change", resolve));
+    const adminMilestoneEvent = new Promise<{ shipmentId: string; milestone: { id: string; type: string; occurredAt: Date } }>((resolve) => admin.once("shipment:milestone_added", resolve));
+    const fieldMilestoneEvent = new Promise<{ shipmentId: string; milestone: { id: string; type: string; occurredAt: Date } }>((resolve) => field.once("shipment:milestone_added", resolve));
+    const outsideRoomListener = vi.fn();
+    field.on("personnel:location_update", fieldPersonnelListener);
+    outsideRoom.onAny(outsideRoomListener);
+
+    broadcastPersonnelLocationUpdate({ personnelId: "person-1", expeditionId: "exp-1", location });
+    broadcastAssetStatusChange({ assetId: "asset-1", expeditionId: "exp-1", status: "DEPLOYED", updatedAt: new Date(), currentLocation: location } as never);
+    broadcastShipmentMilestoneAdded({
+      shipmentId: "shipment-1",
+      expeditionId: "exp-1",
+      milestone: { id: "milestone-1", type: "ARRIVED", occurredAt: new Date(), latitude: -77.85, longitude: 166.67 } as never,
+    });
+
+    expect(await personnelEvent).toMatchObject({ personnelId: "person-1", location: { latitude: -77.85 } });
+    expect(await adminAssetEvent).toMatchObject({ assetId: "asset-1", status: "DEPLOYED" });
+    expect(await fieldAssetEvent).toMatchObject({ assetId: "asset-1", status: "DEPLOYED" });
+    const adminMilestone = await adminMilestoneEvent;
+    const fieldMilestone = await fieldMilestoneEvent;
+    expect(adminMilestone).toMatchObject({ shipmentId: "shipment-1", milestone: { id: "milestone-1", type: "ARRIVED" } });
+    expect(fieldMilestone).toMatchObject({ shipmentId: "shipment-1", milestone: { id: "milestone-1", type: "ARRIVED" } });
+    expect(adminMilestone.milestone).not.toHaveProperty("latitude");
+    expect(fieldMilestone.milestone).not.toHaveProperty("longitude");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(fieldPersonnelListener).not.toHaveBeenCalled();
+    expect(outsideRoomListener).not.toHaveBeenCalled();
   });
 
   it("preserves emergency role notifications and scopes the typed event to joined rooms", async () => {
